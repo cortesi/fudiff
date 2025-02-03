@@ -148,13 +148,13 @@ the patch area using the surrounding context.
 ### Fuzzy Matching via Context
 
 Since exact line numbers are not provided:
-- The patching engine must use fuzzy matching algorithms to locate the block of
-  context lines in the target file.
-- The engine should allow for minor differences such as whitespace changes.
+- The library uses fuzzy matching algorithms to locate the block of context
+  lines in the target file.
+- The matching allows for minor differences such as whitespace changes.
 - A minimum of 2–3 context lines before and after the change is recommended to
   reduce ambiguity.
-- If multiple matches are found, the engine should either prompt the user for
-  clarification or choose the first unique match.
+- If multiple matches are found, the library will return an error indicating
+  ambiguous matches.
 
 ### Handling Special Characters
 
@@ -557,41 +557,35 @@ impl FuzzyDiff {
 ### Ambiguous Context
 
 - **Scenario:** The same block of context appears in multiple locations.
-- **Specification:** The patch engine should either:
-  - Use a fallback strategy (e.g., apply the patch to the first unique match)
-    or
-  - Fail gracefully, prompting the user to resolve the ambiguity.
+- **Behavior:** The library returns an `AmbiguousContext` error indicating
+  multiple possible match locations.
 
 ### Incomplete Hunk Bodies
 
 - **Scenario:** A hunk is missing either a deletion or addition line.
-- **Specification:**  
-  - A hunk with only context lines is treated as a no-op (useful for
-    verification). A hunk with only deletions or only additions (outside of
-    file-boundary insertions) should be flagged as an error.
+- **Behavior:** A hunk with only context lines is treated as a no-op (useful for
+  verification). A hunk with only deletions or only additions (outside of
+  file-boundary insertions) returns an `InvalidHunk` error.
 
 ### Handling Trailing Newlines
 
 - **Scenario:** Differences in trailing newlines could cause mismatches.
-- **Specification:**  
-  - The patch engine must normalize trailing newlines before matching context.
-  - If a patch adds or removes a trailing newline, this should be explicitly
-    represented (e.g., an empty line with the appropriate prefix).
+- **Behavior:**  
+  - The library normalizes trailing newlines before matching context.
+  - Adding or removing a trailing newline is represented by an empty line with
+    the appropriate prefix.
 
 ### Lines Starting with Marker Characters
 
 - **Scenario:** A file line begins with a space, `-`, or `+` naturally.
-- **Specification:**  
-  - The patch engine should reserve the first character in each hunk line for
-    its marker.
-  - If necessary, implement a pre-processing step to escape such lines before
-    diff generation, and unescape them when applying the patch.
+- **Behavior:**  
+  - The first character in each hunk line is reserved for its marker.
+  - The library escapes such lines before diff generation and unescapes them
+    when applying the patch.
 
 ### Overlapping and Adjacent Hunks
 
 - **Scenario:** Two hunks are adjacent or have overlapping context.
-- **Specification:**  
-  - The patch engine should attempt to merge adjacent hunks if their contexts
-    overlap.
-  - If merging is not possible, the engine must report a conflict and require
-    manual resolution.
+- **Behavior:**  
+  - The library merges adjacent hunks if their contexts overlap.
+  - If merging is not possible, it returns an `OverlappingHunks` error.
