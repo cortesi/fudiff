@@ -96,7 +96,7 @@ impl FuDiff {
 }
 
 /// Represents a single hunk within a diff
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Hunk {
     pub context_before: Vec<String>,
     pub deletions: Vec<String>,
@@ -108,86 +108,154 @@ pub struct Hunk {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_parse_basic_hunk() -> Result<()> {
-        let diff = "\
-@@ @@
- fn main() {
--    println!(\"Hello\");
-+    println!(\"Goodbye\");
- }";
-        let fudiff = FuDiff::parse(diff)?;
-        assert_eq!(fudiff.hunks.len(), 1);
-        let hunk = &fudiff.hunks[0];
-        assert_eq!(hunk.context_before, vec!["fn main() {"]);
-        assert_eq!(hunk.deletions, vec!["    println!(\"Hello\");"]);
-        assert_eq!(hunk.additions, vec!["    println!(\"Goodbye\");"]);
-        assert_eq!(hunk.context_after, vec!["}"]);
-        Ok(())
+    /// Strips leading whitespace from each line of the input string.
+    /// Preserves relative indentation within the text while allowing test
+    /// cases to be properly indented in the source.
+    fn strip_leading_whitespace(text: &str) -> String {
+        let lines: Vec<&str> = text.lines().collect();
+        if lines.is_empty() {
+            return String::new();
+        }
+
+        // Find the minimum indentation level
+        let min_indent = lines
+            .iter()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.len() - line.trim_start().len())
+            .min()
+            .unwrap_or(0);
+
+        // Strip exactly that much whitespace from each line
+        lines
+            .iter()
+            .map(|line| {
+                if line.len() <= min_indent {
+                    line.trim_start()
+                } else {
+                    &line[min_indent..]
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    struct TestCase {
+        name: &'static str,
+        input: &'static str,
+        want_hunks: Option<Vec<Hunk>>,
+        want_err: Option<&'static str>,
     }
 
     #[test]
-    fn test_parse_multiple_hunks() -> Result<()> {
-        let diff = "\
-@@ @@
- fn one() {
--    1
-+    2
- }
-@@ @@
- fn two() {
--    3
-+    4
- }";
-        let fudiff = FuDiff::parse(diff)?;
-        assert_eq!(fudiff.hunks.len(), 2);
-        Ok(())
-    }
+    fn test_parse() {
+        let tests = vec![
+            TestCase {
+                name: "basic hunk",
+                input: "
+                    @@ @@
+                     fn main() {
+                    -    println!(\"Hello\");
+                    +    println!(\"Goodbye\");
+                     }",
+                want_hunks: Some(vec![Hunk {
+                    context_before: vec!["fn main() {".to_string()],
+                    deletions: vec!["    println!(\"Hello\");".to_string()],
+                    additions: vec!["    println!(\"Goodbye\");".to_string()],
+                    context_after: vec!["}".to_string()],
+                }]),
+                want_err: None,
+            },
+            TestCase {
+                name: "multiple hunks",
+                input: "
+                    @@ @@
+                     fn one() {
+                    -    1
+                    +    2
+                     }
+                    @@ @@
+                     fn two() {
+                    -    3
+                    +    4
+                     }",
+                want_hunks: Some(vec![
+                    Hunk {
+                        context_before: vec!["fn one() {".to_string()],
+                        deletions: vec!["    1".to_string()],
+                        additions: vec!["    2".to_string()],
+                        context_after: vec!["}".to_string()],
+                    },
+                    Hunk {
+                        context_before: vec!["fn two() {".to_string()],
+                        deletions: vec!["    3".to_string()],
+                        additions: vec!["    4".to_string()],
+                        context_after: vec!["}".to_string()],
+                    },
+                ]),
+                want_err: None,
+            },
+            TestCase {
+                name: "with file headers",
+                input: "
+                    --- a/src/main.rs
+                    +++ b/src/main.rs
+                    @@ @@
+                     fn main() {
+                    -    1
+                    +    2
+                     }",
+                want_hunks: Some(vec![Hunk {
+                    context_before: vec!["fn main() {".to_string()],
+                    deletions: vec!["    1".to_string()],
+                    additions: vec!["    2".to_string()],
+                    context_after: vec!["}".to_string()],
+                }]),
+                want_err: None,
+            },
+            TestCase {
+                name: "error - no hunks",
+                input: "just some\nrandom text",
+                want_hunks: None,
+                want_err: Some("No hunks found in diff"),
+            },
+            TestCase {
+                name: "error - line outside hunk",
+                input: "line without hunk\n@@ @@\n context",
+                want_hunks: None,
+                want_err: Some("Line found outside of hunk"),
+            },
+            TestCase {
+                name: "error - invalid prefix",
+                input: "
+                    @@ @@
+                     context
+                    # invalid",
+                want_hunks: None,
+                want_err: Some("Invalid line prefix"),
+            },
+        ];
 
-    #[test]
-    fn test_parse_with_file_headers() -> Result<()> {
-        let diff = "\
---- a/src/main.rs
-+++ b/src/main.rs
-@@ @@
- fn main() {
--    1
-+    2
- }";
-        let fudiff = FuDiff::parse(diff)?;
-        assert_eq!(fudiff.hunks.len(), 1);
-        Ok(())
-    }
+        for test in tests {
+            let result = FuDiff::parse(&strip_leading_whitespace(test.input));
 
-    #[test]
-    fn test_parse_error_no_hunks() {
-        let diff = "just some\nrandom text";
-        let result = FuDiff::parse(diff);
-        println!("Result: {:?}", result); // Debug the actual error
-        assert!(matches!(
-            result,
-            Err(Error::Parse(msg)) if msg == "No hunks found in diff"
-        ));
-    }
-
-    #[test]
-    fn test_parse_error_line_outside_hunk() {
-        let diff = "line without hunk\n@@ @@\n context";
-        assert!(matches!(
-            FuDiff::parse(diff),
-            Err(Error::Parse(msg)) if msg == "Line found outside of hunk"
-        ));
-    }
-
-    #[test]
-    fn test_parse_error_invalid_prefix() {
-        let diff = "\
-@@ @@
- context
-# invalid";
-        assert!(matches!(
-            FuDiff::parse(diff),
-            Err(Error::Parse(msg)) if msg.starts_with("Invalid line prefix")
-        ));
+            match (result, test.want_hunks, test.want_err) {
+                (Ok(diff), Some(want_hunks), None) => {
+                    assert_eq!(diff.hunks, want_hunks, "test case: {}", test.name);
+                }
+                (Err(Error::Parse(err)), None, Some(want_err)) => {
+                    assert!(
+                        err.contains(want_err),
+                        "test case: {}\nwant error containing: {}\ngot: {}",
+                        test.name,
+                        want_err,
+                        err
+                    );
+                }
+                (result, want_hunks, want_err) => panic!(
+                    "test case: {} - got result: {:?}, want_hunks: {:?}, want_err: {:?}",
+                    test.name, result, want_hunks, want_err
+                ),
+            }
+        }
     }
 }
