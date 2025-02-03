@@ -30,24 +30,8 @@ The specification covers:
 
 An FUDiff document consists of three main parts:
 
-1. **File Headers:** Identify the file to be patched.
-2. **Hunk Headers:** Mark the start of each change block.
-3. **Hunk Bodies:** Contain the actual context lines and changes.
-
-### File Headers
-
-The file header appears at the beginning of the diff. Unlike standard diffs
-that include timestamps, this version emphasizes minimal metadata. For example:
-
-```
---- filename: path/to/file.ext
-+++ filename: path/to/file.ext
-```
-
-**Rules:**
-- The header lines must start with `---` for the original file and `+++` for the updated file.
-- The filename is specified after the label (`filename:`) to ensure consistency.
-- No timestamps or additional metadata is included.
+1. **Hunk Headers:** Mark the start of each change block.
+2. **Hunk Bodies:** Contain the actual context lines and changes.
 
 ### Hunk Headers
 
@@ -90,14 +74,6 @@ The hunk body is a sequence of lines that represent:
 - An addition line indicates that the given text will be inserted at that point.
 
 ## Detailed Syntax and Semantics
-
-### File Header Details
-
-- **Original file header:**  
-  Must begin with `--- filename: ` immediately followed by the file path.
-- **Updated file header:**  
-  Must begin with `+++ filename: ` immediately followed by the file path.
-- The file headers are mandatory and must appear as the first non-comment lines in the diff.
 
 ### Hunk Header Details
 
