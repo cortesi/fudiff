@@ -1,23 +1,25 @@
-//! Implementation of the Fuzzy Unified Diff Format
+//! Implementation of the Fuzzy Unified Diff Format.
+//! This module provides functions to compute, render, parse, apply, and revert fuzzy diffs.
 
 #[cfg(test)]
 mod tests;
 
-/// Error type for FuDiff
+/// Error type for FuDiff operations.
 #[derive(Debug)]
 pub enum Error {
-    /// Failed to parse the diff format
+    /// Failed to parse the diff format.
     Parse(String),
-    /// Failed to apply the patch
+    /// Failed to apply the patch.
     Apply(String),
-    /// Multiple possible matches found for context
+    /// Multiple possible matches found for context.
     AmbiguousMatch(String),
 }
 
-/// Result type alias for diff operations
+/// A type alias for diff operation results.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Creates a diff between two strings.
+/// Computes the fuzzy diff between the given 'old' and 'new' strings.
+/// Returns a FuDiff representing the hunks of changes.
 pub fn diff(old: &str, new: &str) -> FuDiff {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
@@ -40,20 +42,17 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
     }
 
     while i < old_lines.len() || j < new_lines.len() {
-        let look_ahead = 3;
+        let lookahead = 3;
         let mut next_match = None;
 
-        // Look for nearest match within look_ahead window
-        for offset in 0..=look_ahead {
-            let _max_i = usize::min(i + offset, old_lines.len());
-            let _max_j = usize::min(j + offset, new_lines.len());
-
+        // Look for nearest matching lines within the lookahead window.
+        for offset in 0..=lookahead {
             for di in 0..=offset {
                 for dj in 0..=offset {
                     if i + di < old_lines.len()
                         && j + dj < new_lines.len()
-                        && old_lines[i + di] == new_lines[j + dj]
                         && (di > 0 || dj > 0)
+                        && old_lines[i + di] == new_lines[j + dj]
                     {
                         next_match = Some((di, dj));
                         break;
@@ -70,7 +69,7 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
 
         match next_match {
             Some((di, dj)) => {
-                // Add differing lines as changes
+                // Accumulate differing lines.
                 current_hunk
                     .deletions
                     .extend(old_lines[i..i + di].iter().map(|s| s.to_string()));
@@ -80,12 +79,12 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
                 i += di;
                 j += dj;
 
-                // Add matching context lines
+                // Collect matching context lines after the change.
                 let mut matches = 0;
                 while i + matches < old_lines.len()
                     && j + matches < new_lines.len()
                     && old_lines[i + matches] == new_lines[j + matches]
-                    && matches < look_ahead
+                    && matches < lookahead
                 {
                     current_hunk
                         .context_after
@@ -95,7 +94,7 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
                 i += matches;
                 j += matches;
 
-                // Finalize current hunk and start new one if needed
+                // Finalize the current hunk if it contains changes.
                 if !current_hunk.deletions.is_empty() || !current_hunk.additions.is_empty() {
                     let mut new_hunk = Hunk {
                         context_before: Vec::new(),
@@ -112,7 +111,7 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
                 }
             }
             None => {
-                // Add all remaining lines
+                // No further match found: add all remaining lines.
                 current_hunk
                     .deletions
                     .extend(old_lines[i..].iter().map(|s| s.to_string()));
@@ -124,7 +123,7 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
         }
     }
 
-    // Add final hunk if it contains changes
+    // Add the final hunk if any changes exist.
     if !current_hunk.deletions.is_empty() || !current_hunk.additions.is_empty() {
         hunks.push(current_hunk);
     }
@@ -132,24 +131,25 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
     FuDiff { hunks }
 }
 
-/// Parse a fuzzy diff from a string.
+/// Parses a unified diff format string into a FuDiff.
+/// Returns an error if no valid hunks are found or if parsing fails.
 pub fn parse(input: &str) -> Result<FuDiff> {
     let mut hunks = Vec::new();
     let mut current_hunk = None;
 
-    // Empty input is valid for a diff with no changes
+    // Empty input signifies a diff with no changes.
     if input.trim().is_empty() {
         return Ok(FuDiff { hunks: vec![] });
     }
 
-    // Non-empty input must contain hunk markers
+    // Non-empty input must contain hunk markers.
     if !input.contains("@@") {
         return Err(Error::Parse("No hunks found in diff".to_string()));
     }
 
     for line in input.lines() {
         if line.starts_with("@@") && line[2..].contains("@@") {
-            // Finalize current hunk and start new one, ignoring text between @@ markers
+            // Finalize the previous hunk and start a new one.
             if let Some(hunk) = current_hunk.take() {
                 hunks.push(hunk);
             }
@@ -162,12 +162,12 @@ pub fn parse(input: &str) -> Result<FuDiff> {
             continue;
         }
 
-        // Skip irrelevant lines
+        // Skip headers and irrelevant lines.
         if line.is_empty() || line.starts_with("---") || line.starts_with("+++") {
             continue;
         }
 
-        // Require lines to be in a hunk context
+        // Ensure the line is within a hunk.
         let hunk = current_hunk
             .as_mut()
             .ok_or_else(|| Error::Parse("Line found outside of hunk".to_string()))?;
@@ -187,7 +187,7 @@ pub fn parse(input: &str) -> Result<FuDiff> {
         }
     }
 
-    // Capture final hunk if present
+    // Append the final hunk if present.
     if let Some(hunk) = current_hunk.take() {
         hunks.push(hunk);
     }
@@ -195,11 +195,11 @@ pub fn parse(input: &str) -> Result<FuDiff> {
     Ok(FuDiff { hunks })
 }
 
-/// Represents a complete fuzzy diff
+/// Represents a complete fuzzy diff consisting of multiple hunks.
 #[derive(Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FuDiff {
-    hunks: Vec<Hunk>,
+    pub hunks: Vec<Hunk>,
 }
 
 impl std::fmt::Display for FuDiff {
@@ -209,9 +209,9 @@ impl std::fmt::Display for FuDiff {
 }
 
 impl FuDiff {
-    /// Reverts this diff from a string where it was previously applied.
+    /// Reverts the changes represented by this diff from the given input.
+    /// This swaps additions with deletions and applies the patch.
     pub fn revert(&self, input: &str) -> Result<String> {
-        // Create a new diff with swapped additions/deletions
         let reverted = FuDiff {
             hunks: self
                 .hunks
@@ -228,7 +228,7 @@ impl FuDiff {
         reverted.patch(input)
     }
 
-    /// Applies this diff to the given input text, producing the patched result.
+    /// Applies this diff to the provided input text, returning the patched result.
     /// Returns an error if the patch cannot be applied cleanly.
     pub fn patch(&self, input: &str) -> Result<String> {
         if self.hunks.is_empty() {
@@ -236,7 +236,7 @@ impl FuDiff {
         }
 
         let lines: Vec<&str> = input.lines().collect();
-        // Allow empty input if we only have additions
+        // Allow empty input if hunks have only additions.
         if lines.is_empty() && self.hunks.iter().any(|h| !h.deletions.is_empty()) {
             return Err(Error::Apply(
                 "Cannot apply patch to empty input".to_string(),
@@ -247,7 +247,7 @@ impl FuDiff {
         let mut pos = 0;
 
         for hunk in &self.hunks {
-            // Find position in input to apply this hunk
+            // Locate the position in input where this hunk should be applied using context.
             let hunk_pos = if hunk.context_before.is_empty() {
                 pos
             } else {
@@ -271,7 +271,7 @@ impl FuDiff {
                 })?
             };
 
-            // Verify deletions match
+            // Verify that the deletion lines match the corresponding lines in the input.
             let deletion_start = hunk_pos + hunk.context_before.len();
             if !hunk.deletions.is_empty() {
                 if deletion_start + hunk.deletions.len() > lines.len() {
@@ -291,12 +291,12 @@ impl FuDiff {
                 }
             }
 
-            // Copy unchanged lines up to this hunk
+            // Append unchanged lines preceding the hunk.
             if pos < hunk_pos {
                 result.extend(lines[pos..hunk_pos].iter().map(|s| s.to_string()));
             }
 
-            // Add the context lines from input and the new additions
+            // Append the preserved context from the original input and new additions.
             result.extend(
                 hunk.context_before
                     .iter()
@@ -305,21 +305,16 @@ impl FuDiff {
             );
             result.extend(hunk.additions.iter().cloned());
 
-            // Move past this hunk's changes
+            // Advance the position past the deletion section.
             pos = hunk_pos + hunk.context_before.len() + hunk.deletions.len();
         }
 
-        // Copy remaining lines
+        // Append any remaining lines from the input.
         if pos < lines.len() {
             result.extend(lines[pos..].iter().map(|s| s.to_string()));
         }
 
-        // Handle empty result case
-        if result.is_empty() {
-            return Ok(String::new());
-        }
-
-        // Join with newlines and handle trailing newline
+        // Build the output string and preserve trailing newline if appropriate.
         let mut output = result.join("\n");
         if !result.is_empty() {
             let has_input_newline = input.ends_with('\n');
@@ -340,7 +335,7 @@ impl FuDiff {
         Ok(output)
     }
 
-    /// Renders the diff back to the unified diff format.
+    /// Renders the diff into a unified diff format string.
     pub fn render(&self) -> String {
         let mut output = String::new();
 
@@ -378,7 +373,7 @@ impl FuDiff {
     }
 }
 
-/// Represents a single hunk within a diff
+/// Represents a single hunk of changes within a diff.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Hunk {

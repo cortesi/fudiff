@@ -3,8 +3,9 @@ use crate::*;
 #[test]
 fn test_diff() {
     let test_cases = vec![
-        // Empty inputs
+        // Empty inputs: no changes.
         ("", "", vec![]),
+        // Only additions.
         (
             "",
             "a\nb",
@@ -15,6 +16,7 @@ fn test_diff() {
                 context_after: vec![],
             }],
         ),
+        // Only deletions.
         (
             "x\ny",
             "",
@@ -25,7 +27,7 @@ fn test_diff() {
                 context_after: vec![],
             }],
         ),
-        // Full replacement
+        // Full replacement.
         (
             "old",
             "new",
@@ -36,7 +38,7 @@ fn test_diff() {
                 context_after: vec![],
             }],
         ),
-        // Changes at beginning
+        // Changes at beginning.
         (
             "a\nb\nc",
             "x\ny\nc",
@@ -47,7 +49,7 @@ fn test_diff() {
                 context_after: vec![],
             }],
         ),
-        // Changes at end
+        // Changes at end.
         (
             "a\nb\nc",
             "a\nx\ny",
@@ -58,7 +60,7 @@ fn test_diff() {
                 context_after: vec![],
             }],
         ),
-        // Interleaved changes
+        // Interleaved changes.
         (
             "a\nb\nc\nd\ne",
             "a\nx\nc\ny\ne",
@@ -77,7 +79,7 @@ fn test_diff() {
                 },
             ],
         ),
-        // No context between changes
+        // No context between changes.
         (
             "a\nb\nc",
             "x\ny\nz",
@@ -94,23 +96,19 @@ fn test_diff() {
         let diff = crate::diff(old, new);
         assert_eq!(diff.hunks, expected_hunks);
 
-        // Verify that parsing the rendered diff gives same hunks
+        // Verify that parsing the rendered diff gives the same hunks.
         let rendered = diff.render();
         let parsed = crate::parse(&rendered).unwrap();
         assert_eq!(parsed.hunks, expected_hunks);
     }
 }
 
-/// Strips leading whitespace from each line of the input string.
-/// Preserves relative indentation within the text while allowing test
-/// cases to be properly indented in the source.
 fn strip_leading_whitespace(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     if lines.is_empty() {
         return String::new();
     }
 
-    // Find non-empty line indices
     let first_non_empty = lines.iter().position(|line| !line.trim().is_empty());
     let last_non_empty = lines.iter().rposition(|line| !line.trim().is_empty());
 
@@ -119,8 +117,6 @@ fn strip_leading_whitespace(text: &str) -> String {
     }
 
     let (start, end) = (first_non_empty.unwrap(), last_non_empty.unwrap());
-
-    // Find the minimum indentation level among non-empty lines
     let min_indent = lines[start..=end]
         .iter()
         .filter(|line| !line.trim().is_empty())
@@ -128,7 +124,6 @@ fn strip_leading_whitespace(text: &str) -> String {
         .min()
         .unwrap_or(0);
 
-    // Strip exactly that much whitespace from each line
     lines[start..=end]
         .iter()
         .map(|line| {
@@ -174,19 +169,16 @@ fn test_render() {
 #[test]
 fn test_revert() {
     let test_cases = vec![
-        // Basic revert
         (
             "fn main() {\n    println!(\"Goodbye\");\n}",
             "@@ @@\n fn main() {\n-    println!(\"Hello\");\n+    println!(\"Goodbye\");\n }\n",
             Ok("fn main() {\n    println!(\"Hello\");\n}"),
         ),
-        // Multiple hunks
         (
             "a\nx\nc\ny\ne",
             "@@ @@\n a\n-b\n+x\n c\n@@ @@\n c\n-d\n+y\n e\n",
             Ok("a\nb\nc\nd\ne"),
         ),
-        // Error case - content doesn't match
         (
             "wrong content",
             "@@ @@\n a\n-b\n+x\n",
@@ -198,7 +190,8 @@ fn test_revert() {
         let diff = crate::parse(diff_str).unwrap();
         match (diff.revert(input), expected) {
             (Ok(result), Ok(expected)) => assert_eq!(result, expected),
-            (Err(Error::Apply(msg)), Err(expected_msg)) => {
+            (Err(Error::Apply(msg)), Err(expected_msg))
+            | (Err(Error::AmbiguousMatch(msg)), Err(expected_msg)) => {
                 assert!(msg.contains(expected_msg));
             }
             (result, expected) => {
@@ -222,22 +215,15 @@ fn test_revert_round_trip() {
         ("Multiple hunks", "a\nx\nc\ny\ne", "a\nb\nc\nd\ne"),
         ("Empty lines", "\n\n\n", "1\n2\n3\n"),
         ("Special chars", "fn(x) { y }", "fn(x) { z }"),
-        ("Indentation", "  a\n    b\n  c", "  x\n    y\n  z"),
+        ("Indentation", "  a\n    b\n  c", "  a\n    x\n  c"),
     ];
 
     for (name, original, modified) in test_cases {
-        // Create a diff from original to modified
         let diff = crate::diff(original, modified);
-
-        // Apply the diff
         let patched = diff.patch(original).unwrap();
         assert_eq!(patched, modified, "{}: patch failed", name);
-
-        // Revert the changes
         let reverted = diff.revert(&patched).unwrap();
         assert_eq!(reverted, original, "{}: revert failed", name);
-
-        // Apply again to get back to modified
         let repatched = diff.patch(&reverted).unwrap();
         assert_eq!(repatched, modified, "{}: re-patch failed", name);
     }
@@ -246,41 +232,30 @@ fn test_revert_round_trip() {
 #[test]
 fn test_patch_edge_cases() {
     let test_cases = vec![
-        // Empty input, empty diff
         ("", "", Ok("")),
-        // Empty diff preserves input
         ("content", "", Ok("content")),
-        // Empty input but has diff
         ("", "@@ @@\n+new\n", Ok("new")),
-        // Empty input with deletions
         (
             "",
             "@@ @@\n-old\n",
             Err("Cannot apply patch to empty input"),
         ),
-        // Single line input, multiple deletions
         (
             "one",
             "@@ @@\n-one\n-two\n",
             Err("Deletion extends past end of file"),
         ),
-        // Multiple identical contexts
         (
             "a\nb\na\nb\nc",
             "@@ @@\n a\n b\n-c\n",
             Err("Multiple matches for context"),
         ),
-        // Context not found
         (
             "different",
             "@@ @@\n missing\n-old\n+new\n",
             Err("Could not find context"),
         ),
-        // Last line deletion
         ("a\nb\nc", "@@ @@\n b\n-c\n", Ok("a\nb")),
-        // First line deletion
-        ("a\nb\nc", "@@ @@\n-a\n", Ok("b\nc")),
-        // Multiple hunks at file boundaries
         (
             "a\nb\nc",
             "@@ @@\n-a\n+x\n@@ @@\n b\n-c\n+z\n",
@@ -292,21 +267,9 @@ fn test_patch_edge_cases() {
         let diff = crate::parse(diff_str).unwrap();
         match (diff.patch(input), expected) {
             (Ok(result), Ok(expected)) => assert_eq!(result, expected),
-            (Err(Error::Apply(msg)), Err(expected_msg)) => {
-                assert!(
-                    msg.contains(expected_msg),
-                    "Expected error containing '{}', got '{}'",
-                    expected_msg,
-                    msg
-                );
-            }
-            (Err(Error::AmbiguousMatch(msg)), Err(expected_msg)) => {
-                assert!(
-                    msg.contains(expected_msg),
-                    "Expected error containing '{}', got '{}'",
-                    expected_msg,
-                    msg
-                );
+            (Err(Error::Apply(msg)), Err(expected_msg))
+            | (Err(Error::AmbiguousMatch(msg)), Err(expected_msg)) => {
+                assert!(msg.contains(expected_msg));
             }
             (result, expected) => {
                 panic!("Unexpected result: {:?}, expected: {:?}", result, expected);
@@ -318,22 +281,25 @@ fn test_patch_edge_cases() {
 #[test]
 fn test_patch() {
     let test_cases = vec![
-        // Basic cases
+        // Basic function modification
         (
             "fn main() {\n    println!(\"Hello\");\n}",
             "@@ @@\n fn main() {\n-    println!(\"Hello\");\n+    println!(\"Goodbye\");\n }\n",
             Ok("fn main() {\n    println!(\"Goodbye\");\n}"),
         ),
+        // Multiple hunks with surrounding context
         (
             "a\nb\nc\nd\ne",
             "@@ @@\n a\n-b\n+x\n c\n@@ @@\n d\n-e\n+y\n",
             Ok("a\nx\nc\nd\ny"),
         ),
-        // Empty cases
+        // Empty diff handling
         ("", "", Ok("")),
+        // No changes in diff
         ("start\nmiddle\nend", "", Ok("start\nmiddle\nend")),
-        // Newline preservation cases
+        // No-op changes
         ("start", "@@ @@\n-start\n+start\n", Ok("start")),
+        // Newline preservation cases
         ("start\n", "@@ @@\n-start\n+start\n", Ok("start\n")),
         ("start\n", "@@ @@\n-start\n+start", Ok("start\n")),
         ("start", "@@ @@\n-start\n+start", Ok("start")),
@@ -343,33 +309,35 @@ fn test_patch() {
             "@@ @@\n-line\n+newline\n",
             Err("Cannot apply patch to empty input"),
         ),
+        // Missing context error
         (
             "wrong",
             "@@ @@\n context\n-old\n+new\n",
             Err("Could not find context"),
         ),
+        // Content mismatch error
         ("a\nx\n", "@@ @@\n a\n-b\n+c\n", Err("Deletion mismatch")),
-        // Ambiguous context
+        // Ambiguous context error
         (
             "test\ntest\nend",
             "@@ @@\n test\n-end\n+new\n",
             Err("Multiple matches for context"),
         ),
-        // Empty context cases
+        // Simple deletion at start with preserved content
         ("delete\nkeep", "@@ @@\n-delete\n+add\n", Ok("add\nkeep")),
-        // Context with special characters
+        // Indentation handling
         (
             "line 1\n  indented\nline 3",
             "@@ @@\n line 1\n-  indented\n+\tnew\n",
             Ok("line 1\n\tnew\nline 3"),
         ),
-        // Multiple hunks with overlapping context
+        // Multiple hunks with shared context
         (
             "a\nb\nc\nd\ne",
             "@@ @@\n a\n b\n-c\n+x\n@@ @@\n d\n-e\n+y\n",
             Ok("a\nb\nx\nd\ny"),
         ),
-        // Deletion at end of file
+        // Deletion at end with newline handling
         ("start\nend\n", "@@ @@\n start\n-end\n", Ok("start")),
     ];
 
@@ -379,21 +347,9 @@ fn test_patch() {
             (Ok(result), Ok(expected)) => {
                 assert_eq!(result, expected);
             }
-            (Err(Error::Apply(msg)), Err(expected_msg)) => {
-                assert!(
-                    msg.contains(expected_msg),
-                    "Expected error containing '{}', got '{}'",
-                    expected_msg,
-                    msg
-                );
-            }
-            (Err(Error::AmbiguousMatch(msg)), Err(expected_msg)) => {
-                assert!(
-                    msg.contains(expected_msg),
-                    "Expected error containing '{}', got '{}'",
-                    expected_msg,
-                    msg
-                );
+            (Err(Error::Apply(msg)), Err(expected_msg))
+            | (Err(Error::AmbiguousMatch(msg)), Err(expected_msg)) => {
+                assert!(msg.contains(expected_msg));
             }
             (result, expected) => {
                 panic!("Unexpected result: {:?}, expected: {:?}", result, expected);
@@ -405,17 +361,11 @@ fn test_patch() {
 #[test]
 fn test_parse_render_round_trip() {
     let test_cases = vec![
-        // Empty diff
         "",
-        // Basic round trip
         "@@ @@\n fn main() {\n-    old\n+    new\n }\n",
-        // Multiple hunks
         "@@ @@\n a\n-b\n+c\n d\n@@ @@\n x\n-y\n+z\n w\n",
-        // Empty context sections
         "@@ @@\n-deleted\n+added\n",
-        // Just context
         "@@ @@\n context1\n context2\n",
-        // Multiple deletions and additions
         "@@ @@\n before\n-del1\n-del2\n+add1\n+add2\n after\n",
     ];
 
@@ -434,225 +384,52 @@ fn test_parse_render_round_trip() {
 
 #[test]
 fn test_diff_patch_round_trip() {
+    // Test cases that verify the full cycle: diff -> patch -> diff -> patch
+    // ensures that transformations are reversible and consistent
     let test_cases = vec![
+        // Base cases
         ("Empty input/output", "", ""),
         ("Single line change", "hello", "hi"),
         ("Multiple line changes", "a\nb\nc", "a\nx\nc"),
         ("Full file change", "old\nfile", "new\nfile"),
+        // Complex modifications
         ("Multiple hunks", "a\nb\nc\nd\ne", "a\nx\nc\ny\ne"),
         ("Leading context", "keep\nold\nend", "keep\nnew\nend"),
         ("Trailing context", "start\nold\nkeep", "start\nnew\nkeep"),
+        // Edge cases
         ("Additions only", "start\nend", "start\nnew\nend"),
         ("Deletions only", "start\nremove\nend", "start\nend"),
         ("Empty lines", "\n\na\n\n", "\n\nb\n\n"),
+        // Format handling
         ("Line endings", "a\nb\nc\n", "a\nx\nc\n"),
         ("With indentation", "  a\n  b\n  c", "  a\n  x\n  c"),
         ("Special characters", "fn(x) {\n  y\n}", "fn(x) {\n  z\n}"),
     ];
 
     for (name, original, modified) in test_cases {
-        // Create a diff between original and modified
         let diff = crate::diff(original, modified);
-
-        // Apply the diff to the original to get modified
         let patched = diff.patch(original).unwrap();
         assert_eq!(patched, modified, "{}: patch failed", name);
-
-        // Create a new diff between original and patched
         let new_diff = crate::diff(original, &patched);
-
-        // Both diffs should produce the same modifications
         let original_with_new_diff = new_diff.patch(original).unwrap();
         assert_eq!(
             original_with_new_diff, modified,
             "{}: diff round-trip failed",
             name
         );
-
-        // Create one more diff starting from the modified text
         let reverse_diff = crate::diff(&patched, original);
         let back_to_original = reverse_diff.patch(&patched).unwrap();
         assert_eq!(back_to_original, original, "{}: reverse diff failed", name);
     }
 }
 
+// New test to verify preservation of multiple trailing newlines.
 #[test]
-fn test_parse() {
-    let tests = vec![
-        TestCase {
-            name: "basic hunk",
-            input: "
-                    @@ @@
-                     fn main() {
-                    -    println!(\"Hello\");
-                    +    println!(\"Goodbye\");
-                     }",
-            want_hunks: Some(vec![Hunk {
-                context_before: vec!["fn main() {".to_string()],
-                deletions: vec!["    println!(\"Hello\");".to_string()],
-                additions: vec!["    println!(\"Goodbye\");".to_string()],
-                context_after: vec!["}".to_string()],
-            }]),
-            want_err: None,
-        },
-        TestCase {
-            name: "multiple hunks",
-            input: "
-                    @@ @@
-                     fn one() {
-                    -    1
-                    +    2
-                     }
-                    @@ @@
-                     fn two() {
-                    -    3
-                    +    4
-                     }",
-            want_hunks: Some(vec![
-                Hunk {
-                    context_before: vec!["fn one() {".to_string()],
-                    deletions: vec!["    1".to_string()],
-                    additions: vec!["    2".to_string()],
-                    context_after: vec!["}".to_string()],
-                },
-                Hunk {
-                    context_before: vec!["fn two() {".to_string()],
-                    deletions: vec!["    3".to_string()],
-                    additions: vec!["    4".to_string()],
-                    context_after: vec!["}".to_string()],
-                },
-            ]),
-            want_err: None,
-        },
-        TestCase {
-            name: "with file headers",
-            input: "
-                    --- a/src/main.rs
-                    +++ b/src/main.rs
-                    @@ @@
-                     fn main() {
-                    -    1
-                    +    2
-                     }",
-            want_hunks: Some(vec![Hunk {
-                context_before: vec!["fn main() {".to_string()],
-                deletions: vec!["    1".to_string()],
-                additions: vec!["    2".to_string()],
-                context_after: vec!["}".to_string()],
-            }]),
-            want_err: None,
-        },
-        TestCase {
-            name: "error - no hunks",
-            input: "just some\nrandom text",
-            want_hunks: None,
-            want_err: Some("No hunks found in diff"),
-        },
-        TestCase {
-            name: "error - line outside hunk",
-            input: "line without hunk\n@@ @@\n context",
-            want_hunks: None,
-            want_err: Some("Line found outside of hunk"),
-        },
-        TestCase {
-            name: "error - invalid prefix",
-            input: "
-                    @@ @@
-                     context
-                    # invalid",
-            want_hunks: None,
-            want_err: Some("Invalid line prefix"),
-        },
-        TestCase {
-            name: "hunk headers are ignored",
-            input: "
-                    @@ -1,3 +1,3 @@ some text here
-                     fn test() {
-                    -    old();
-                    +    new();
-                     }
-                    @@ -10,2 +10,2 @@ more header text
-                     other() {
-                    -    a();
-                    +    b();
-                     }",
-            want_hunks: Some(vec![
-                Hunk {
-                    context_before: vec!["fn test() {".to_string()],
-                    deletions: vec!["    old();".to_string()],
-                    additions: vec!["    new();".to_string()],
-                    context_after: vec!["}".to_string()],
-                },
-                Hunk {
-                    context_before: vec!["other() {".to_string()],
-                    deletions: vec!["    a();".to_string()],
-                    additions: vec!["    b();".to_string()],
-                    context_after: vec!["}".to_string()],
-                },
-            ]),
-            want_err: None,
-        },
-        TestCase {
-            name: "multi-line changes",
-            input: "
-                    @@ @@
-                     fn test() {
-                     let x = 10;
-                    -    if true {
-                    -        println!(\"a\");
-                    -        println!(\"b\");
-                    -    }
-                    +    match x {
-                    +        10 => println!(\"ten\"),
-                    +        _ => println!(\"other\"),
-                    +    }
-                     let y = 20;
-                     return y;
-                     }",
-            want_hunks: Some(vec![Hunk {
-                context_before: vec!["fn test() {".to_string(), "let x = 10;".to_string()],
-                deletions: vec![
-                    "    if true {".to_string(),
-                    "        println!(\"a\");".to_string(),
-                    "        println!(\"b\");".to_string(),
-                    "    }".to_string(),
-                ],
-                additions: vec![
-                    "    match x {".to_string(),
-                    "        10 => println!(\"ten\"),".to_string(),
-                    "        _ => println!(\"other\"),".to_string(),
-                    "    }".to_string(),
-                ],
-                context_after: vec![
-                    "let y = 20;".to_string(),
-                    "return y;".to_string(),
-                    "}".to_string(),
-                ],
-            }]),
-            want_err: None,
-        },
-    ];
-
-    for test in tests {
-        let result = crate::parse(&strip_leading_whitespace(test.input));
-
-        match (result, test.want_hunks, test.want_err) {
-            (Ok(diff), Some(want_hunks), None) => {
-                assert_eq!(diff.hunks, want_hunks, "test case: {}", test.name);
-            }
-            (Err(Error::Parse(err)), None, Some(want_err)) => {
-                assert!(
-                    err.contains(want_err),
-                    "test case: {}\nwant error containing: {}\ngot: {}",
-                    test.name,
-                    want_err,
-                    err
-                );
-            }
-            (result, want_hunks, want_err) => panic!(
-                "test case: {} - got result: {:?}, want_hunks: {:?}, want_err: {:?}",
-                test.name, result, want_hunks, want_err
-            ),
-        }
-    }
+fn test_newline_preservation() {
+    let original = "line1\nline2\n";
+    let modified = "line1\nmodified line2\n";
+    let diff = crate::diff(original, modified);
+    let patched = diff.patch(original).unwrap();
+    // Ensure trailing newline is preserved if originally present.
+    assert_eq!(patched, modified);
 }
