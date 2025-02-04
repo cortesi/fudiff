@@ -704,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn test_round_trip() {
+    fn test_parse_render_round_trip() {
         let test_cases = vec![
             // Empty diff
             "",
@@ -730,6 +730,50 @@ mod tests {
                 "Round trip failed.\nInput:\n{}\nRe-rendered:\n{}",
                 input, rendered
             );
+        }
+    }
+
+    #[test]
+    fn test_diff_patch_round_trip() {
+        let test_cases = vec![
+            ("Empty input/output", "", ""),
+            ("Single line change", "hello", "hi"),
+            ("Multiple line changes", "a\nb\nc", "a\nx\nc"),
+            ("Full file change", "old\nfile", "new\nfile"),
+            ("Multiple hunks", "a\nb\nc\nd\ne", "a\nx\nc\ny\ne"),
+            ("Leading context", "keep\nold\nend", "keep\nnew\nend"),
+            ("Trailing context", "start\nold\nkeep", "start\nnew\nkeep"),
+            ("Additions only", "start\nend", "start\nnew\nend"),
+            ("Deletions only", "start\nremove\nend", "start\nend"),
+            ("Empty lines", "\n\na\n\n", "\n\nb\n\n"),
+            ("Line endings", "a\nb\nc\n", "a\nx\nc\n"),
+            ("With indentation", "  a\n  b\n  c", "  a\n  x\n  c"),
+            ("Special characters", "fn(x) {\n  y\n}", "fn(x) {\n  z\n}"),
+        ];
+
+        for (name, original, modified) in test_cases {
+            // Create a diff between original and modified
+            let diff = FuDiff::diff(original, modified);
+
+            // Apply the diff to the original to get modified
+            let patched = diff.patch(original).unwrap();
+            assert_eq!(patched, modified, "{}: patch failed", name);
+
+            // Create a new diff between original and patched
+            let new_diff = FuDiff::diff(original, &patched);
+
+            // Both diffs should produce the same modifications
+            let original_with_new_diff = new_diff.patch(original).unwrap();
+            assert_eq!(
+                original_with_new_diff, modified,
+                "{}: diff round-trip failed",
+                name
+            );
+
+            // Create one more diff starting from the modified text
+            let reverse_diff = FuDiff::diff(&patched, original);
+            let back_to_original = reverse_diff.patch(&patched).unwrap();
+            assert_eq!(back_to_original, original, "{}: reverse diff failed", name);
         }
     }
 
