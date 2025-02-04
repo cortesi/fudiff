@@ -15,7 +15,6 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Represents a complete fuzzy diff
-/// Represents a complete fuzzy diff
 #[derive(Debug)]
 pub struct FuDiff {
     pub hunks: Vec<Hunk>,
@@ -33,8 +32,8 @@ impl FuDiff {
         }
 
         for line in input.lines() {
-            if line.starts_with("@@") {
-                // Finalize current hunk and start new one
+            if line.starts_with("@@") && line[2..].contains("@@") {
+                // Finalize current hunk and start new one, ignoring text between @@ markers
                 if let Some(hunk) = current_hunk.take() {
                     hunks.push(hunk);
                 }
@@ -222,6 +221,74 @@ mod tests {
                     # invalid",
                 want_hunks: None,
                 want_err: Some("Invalid line prefix"),
+            },
+            TestCase {
+                name: "hunk headers are ignored",
+                input: "
+                    @@ -1,3 +1,3 @@ some text here
+                     fn test() {
+                    -    old();
+                    +    new();
+                     }
+                    @@ -10,2 +10,2 @@ more header text
+                     other() {
+                    -    a();
+                    +    b();
+                     }",
+                want_hunks: Some(vec![
+                    Hunk {
+                        context_before: vec!["fn test() {".to_string()],
+                        deletions: vec!["    old();".to_string()],
+                        additions: vec!["    new();".to_string()],
+                        context_after: vec!["}".to_string()],
+                    },
+                    Hunk {
+                        context_before: vec!["other() {".to_string()],
+                        deletions: vec!["    a();".to_string()],
+                        additions: vec!["    b();".to_string()],
+                        context_after: vec!["}".to_string()],
+                    },
+                ]),
+                want_err: None,
+            },
+            TestCase {
+                name: "multi-line changes",
+                input: "
+                    @@ @@
+                     fn test() {
+                     let x = 10;
+                    -    if true {
+                    -        println!(\"a\");
+                    -        println!(\"b\");
+                    -    }
+                    +    match x {
+                    +        10 => println!(\"ten\"),
+                    +        _ => println!(\"other\"),
+                    +    }
+                     let y = 20;
+                     return y;
+                     }",
+                want_hunks: Some(vec![Hunk {
+                    context_before: vec!["fn test() {".to_string(), "let x = 10;".to_string()],
+                    deletions: vec![
+                        "    if true {".to_string(),
+                        "        println!(\"a\");".to_string(),
+                        "        println!(\"b\");".to_string(),
+                        "    }".to_string(),
+                    ],
+                    additions: vec![
+                        "    match x {".to_string(),
+                        "        10 => println!(\"ten\"),".to_string(),
+                        "        _ => println!(\"other\"),".to_string(),
+                        "    }".to_string(),
+                    ],
+                    context_after: vec![
+                        "let y = 20;".to_string(),
+                        "return y;".to_string(),
+                        "}".to_string(),
+                    ],
+                }]),
+                want_err: None,
             },
         ];
 

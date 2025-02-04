@@ -48,6 +48,7 @@ symbols:
 - The header must appear on a single line by itself.
 - No line numbers or context hashes are provided. The patching tool relies
   solely on the context lines that follow to locate the correct patch position.
+- Any content between the `@@` symbols is ignored.
 
 ### Hunk Bodies
 
@@ -167,8 +168,6 @@ fn main() {
 To update the greeting, the diff would be:
 
 ```diff
---- filename: example.rs
-+++ filename: example.rs
 @@ @@
   fn main() {
 -    println!("Hello, world!");
@@ -197,8 +196,6 @@ fn compute(x: i32) -> i32 {
 **Example 1:** Replace multiple consecutive lines:
 
 ```diff
---- filename: compute.rs
-+++ filename: compute.rs
 @@ @@
   fn compute(x: i32) -> i32 {
 -    let y = x * 2;
@@ -216,8 +213,6 @@ fn compute(x: i32) -> i32 {
 **Example 2:** Replace some lines and add more:
 
 ```diff
---- filename: compute.rs
-+++ filename: compute.rs
 @@ @@
   fn compute(x: i32) -> i32 {
      let y = x * 2;
@@ -268,8 +263,6 @@ impl Config {
 **Patch with multiple hunks:**
 
 ```diff
---- filename: config.rs
-+++ filename: config.rs
 @@ @@
  use std::path::Path;
 +use std::time::Duration;
@@ -320,8 +313,6 @@ fn main() {
 
 **Diff adding a header:**
 ```diff
---- filename: main.rs
-+++ filename: main.rs
 @@ @@
 +// Copyright 2024 Example Corp.
 +// Licensed under MIT
@@ -344,8 +335,6 @@ fn process() {
 
 **Diff adding a footer:**
 ```diff
---- filename: config.rs
-+++ filename: config.rs
 @@ @@
 fn process() {
     // ... processing code
