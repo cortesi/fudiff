@@ -33,6 +33,26 @@ let patched = diff.patch("old content").unwrap();
 let original = diff.revert("new content").unwrap();
 ```
 
+## Diff Format
+
+The format uses context lines (prefixed with space), deletions (prefixed with
+`-`), and additions (prefixed with `+`):
+
+```diff
+@@ @@
+ fn compute(x: i32) -> i32 {
+-    let y = x * 2;
+-    println!("Value: {}", y);
++    let y = x + 10;
++    println!("Result: {}", y);
++    println!("Input was: {}", x);
+     y
+ }
+```
+
+The patch is located by matching the unchanged context lines rather than using
+line numbers. Multiple changes are separated by hunk headers (`@@ @@`).
+
 ## License
 
 MIT
