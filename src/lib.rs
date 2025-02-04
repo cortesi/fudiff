@@ -230,13 +230,14 @@ impl FuDiff {
 
     /// Applies this diff to the provided input text, returning the patched result.
     /// Returns an error if the patch cannot be applied cleanly.
+    /// Applies this diff to the provided input text, returning the patched result.
+    /// Returns an error if the patch cannot be applied cleanly.
     pub fn patch(&self, input: &str) -> Result<String> {
         if self.hunks.is_empty() {
             return Ok(input.to_string());
         }
 
         let lines: Vec<&str> = input.lines().collect();
-        // Allow empty input if hunks have only additions.
         if lines.is_empty() && self.hunks.iter().any(|h| !h.deletions.is_empty()) {
             return Err(Error::Apply(
                 "Cannot apply patch to empty input".to_string(),
@@ -247,31 +248,31 @@ impl FuDiff {
         let mut pos = 0;
 
         for hunk in &self.hunks {
-            // Locate the position in input where this hunk should be applied using context.
             let hunk_pos = if hunk.context_before.is_empty() {
                 pos
             } else {
-                let mut found_pos = None;
-                'outer: for i in pos..=lines.len().saturating_sub(hunk.context_before.len()) {
-                    for (j, line) in hunk.context_before.iter().enumerate() {
-                        if i + j >= lines.len() || lines[i + j] != line {
-                            continue 'outer;
+                let mut candidate = None;
+                for i in pos..=lines.len().saturating_sub(hunk.context_before.len()) {
+                    if hunk
+                        .context_before
+                        .iter()
+                        .enumerate()
+                        .all(|(j, ctx)| lines[i + j] == ctx)
+                    {
+                        if candidate.is_some() {
+                            return Err(Error::AmbiguousMatch(format!(
+                                "Multiple matches for context: {:?}",
+                                hunk.context_before
+                            )));
                         }
+                        candidate = Some(i);
                     }
-                    if found_pos.is_some() {
-                        return Err(Error::AmbiguousMatch(format!(
-                            "Multiple matches for context: {:?}",
-                            hunk.context_before
-                        )));
-                    }
-                    found_pos = Some(i);
                 }
-                found_pos.ok_or_else(|| {
+                candidate.ok_or_else(|| {
                     Error::Apply(format!("Could not find context: {:?}", hunk.context_before))
                 })?
             };
 
-            // Verify that the deletion lines match the corresponding lines in the input.
             let deletion_start = hunk_pos + hunk.context_before.len();
             if !hunk.deletions.is_empty() {
                 if deletion_start + hunk.deletions.len() > lines.len() {
@@ -291,12 +292,9 @@ impl FuDiff {
                 }
             }
 
-            // Append unchanged lines preceding the hunk.
             if pos < hunk_pos {
                 result.extend(lines[pos..hunk_pos].iter().map(|s| s.to_string()));
             }
-
-            // Append the preserved context from the original input and new additions.
             result.extend(
                 hunk.context_before
                     .iter()
@@ -305,30 +303,21 @@ impl FuDiff {
             );
             result.extend(hunk.additions.iter().cloned());
 
-            // Advance the position past the deletion section.
-            pos = hunk_pos + hunk.context_before.len() + hunk.deletions.len();
+            pos = deletion_start + hunk.deletions.len();
         }
 
-        // Append any remaining lines from the input.
         if pos < lines.len() {
             result.extend(lines[pos..].iter().map(|s| s.to_string()));
         }
 
-        // Build the output string and preserve trailing newline if appropriate.
         let mut output = result.join("\n");
-        if !result.is_empty() {
-            let has_input_newline = input.ends_with('\n');
-            let mut has_output_newline = false;
-
-            if let Some(last_hunk) = self.hunks.last() {
-                if !last_hunk.context_after.is_empty() || !last_hunk.additions.is_empty() {
-                    has_output_newline = has_input_newline;
-                }
-            } else {
-                has_output_newline = has_input_newline;
-            }
-
-            if has_output_newline {
+        if !result.is_empty() && input.contains('\n') && input.ends_with('\n') {
+            let last_hunk = self.hunks.last().unwrap();
+            // Append newline only if the last hunk did not remove the trailing newline.
+            if last_hunk.deletions.is_empty()
+                || !last_hunk.additions.is_empty()
+                || !last_hunk.context_after.is_empty()
+            {
                 output.push('\n');
             }
         }
