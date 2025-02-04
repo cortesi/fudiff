@@ -197,6 +197,7 @@ pub fn parse(input: &str) -> Result<FuDiff> {
 
 /// Represents a complete fuzzy diff
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FuDiff {
     hunks: Vec<Hunk>,
 }
@@ -379,6 +380,7 @@ impl FuDiff {
 
 /// Represents a single hunk within a diff
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Hunk {
     pub context_before: Vec<String>,
     pub deletions: Vec<String>,
