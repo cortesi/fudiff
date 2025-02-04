@@ -25,16 +25,16 @@ impl FuDiff {
     /// Parse a fuzzy diff from a string.
     pub fn parse(input: &str) -> Result<Self> {
         let mut hunks = Vec::new();
-        let mut current_hunk: Option<Hunk> = None;
+        let mut current_hunk = None;
 
-        // No hunk headers found in input
+        // Fast-fail if no hunk markers present
         if !input.contains("@@") {
             return Err(Error::Parse("No hunks found in diff".to_string()));
         }
 
         for line in input.lines() {
             if line.starts_with("@@") {
-                // When we see a new hunk header, push any existing hunk
+                // Finalize current hunk and start new one
                 if let Some(hunk) = current_hunk.take() {
                     hunks.push(hunk);
                 }
@@ -47,51 +47,41 @@ impl FuDiff {
                 continue;
             }
 
-            // Skip empty lines and file headers
+            // Skip irrelevant lines
             if line.is_empty() || line.starts_with("---") || line.starts_with("+++") {
                 continue;
             }
 
-            // If we haven't seen a hunk header yet and get non-header content, it's an error
-            if current_hunk.is_none() && !line.starts_with("@@") {
-                return Err(Error::Parse("Line found outside of hunk".to_string()));
-            }
+            // Require lines to be in a hunk context
+            let hunk = current_hunk
+                .as_mut()
+                .ok_or_else(|| Error::Parse("Line found outside of hunk".to_string()))?;
 
-            // Past this point, we must have a hunk for non-header lines
-            if !line.starts_with("@@") {
-                let hunk = current_hunk
-                    .as_mut()
-                    .expect("Internal error: hunk should exist");
-
-                // First character determines line type
-                let (marker, content) = line.split_at(1);
-                match marker {
-                    " " => {
-                        // Context lines go into before/after based on whether we've seen changes
-                        if hunk.deletions.is_empty() && hunk.additions.is_empty() {
-                            hunk.context_before.push(content.to_string());
-                        } else {
-                            hunk.context_after.push(content.to_string());
-                        }
+            let (marker, content) = line.split_at(1);
+            match marker {
+                " " => {
+                    if hunk.deletions.is_empty() && hunk.additions.is_empty() {
+                        hunk.context_before.push(content.to_string());
+                    } else {
+                        hunk.context_after.push(content.to_string());
                     }
-                    "-" => hunk.deletions.push(content.to_string()),
-                    "+" => hunk.additions.push(content.to_string()),
-                    _ => return Err(Error::Parse(format!("Invalid line prefix: {}", marker))),
                 }
+                "-" => hunk.deletions.push(content.to_string()),
+                "+" => hunk.additions.push(content.to_string()),
+                _ => return Err(Error::Parse(format!("Invalid line prefix: {}", marker))),
             }
         }
 
-        // Don't forget the last hunk
-        if let Some(ref hunk) = current_hunk {
-            hunks.push(hunk.clone());
+        // Capture final hunk if present
+        if let Some(hunk) = current_hunk.take() {
+            hunks.push(hunk);
         }
 
-        // If we have no hunks after processing all input, we never saw a hunk header
         if hunks.is_empty() {
-            return Err(Error::Parse("No hunks found in diff".to_string()));
+            Err(Error::Parse("No hunks found in diff".to_string()))
+        } else {
+            Ok(FuDiff { hunks })
         }
-
-        Ok(FuDiff { hunks })
     }
 }
 
