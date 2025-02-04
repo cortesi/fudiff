@@ -35,25 +35,25 @@ impl FuDiff {
             output.push_str("@@ @@\n");
 
             for line in &hunk.context_before {
-                output.push_str(" ");
+                output.push(' ');
                 output.push_str(line);
                 output.push('\n');
             }
 
             for line in &hunk.deletions {
-                output.push_str("-");
+                output.push('-');
                 output.push_str(line);
                 output.push('\n');
             }
 
             for line in &hunk.additions {
-                output.push_str("+");
+                output.push('+');
                 output.push_str(line);
                 output.push('\n');
             }
 
             for line in &hunk.context_after {
-                output.push_str(" ");
+                output.push(' ');
                 output.push_str(line);
                 output.push('\n');
             }
