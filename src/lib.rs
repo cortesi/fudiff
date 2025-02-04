@@ -30,51 +30,106 @@ impl FuDiff {
     /// Applies this diff to the given input text, producing the patched result.
     /// Returns an error if the patch cannot be applied cleanly.
     pub fn patch(&self, input: &str) -> Result<String> {
+        if input.is_empty() && self.hunks.is_empty() {
+            return Ok(String::new());
+        }
+
         let lines: Vec<&str> = input.lines().collect();
         let mut result = Vec::new();
         let mut pos = 0;
 
+        // Check for empty input but non-empty hunks
+        if lines.is_empty() && !self.hunks.is_empty() {
+            return Err(Error::Apply(
+                "Cannot apply patch to empty input".to_string(),
+            ));
+        }
+
         for hunk in &self.hunks {
-            // Find position of context before
-            let mut context_pos = None;
-            'outer: for i in pos..=lines.len() {
-                if i + hunk.context_before.len() > lines.len() {
-                    continue;
-                }
-                for (j, context_line) in hunk.context_before.iter().enumerate() {
-                    if lines[i + j] != context_line {
-                        continue 'outer;
+            // Empty context should match at current position
+            if hunk.context_before.is_empty() {
+                if !hunk.deletions.is_empty() {
+                    // Verify deletions match at current position
+                    if pos + hunk.deletions.len() > lines.len() {
+                        return Err(Error::Apply(
+                            "Deletion extends past end of file".to_string(),
+                        ));
+                    }
+                    for (i, deletion) in hunk.deletions.iter().enumerate() {
+                        if lines[pos + i] != deletion {
+                            return Err(Error::Apply(format!(
+                                "Deletion mismatch at line {} - expected '{}', found '{}'",
+                                pos + i + 1,
+                                deletion,
+                                lines[pos + i]
+                            )));
+                        }
                     }
                 }
-                context_pos = Some(i);
-                break;
-            }
+            } else {
+                // Find context position
+                let mut found = false;
+                let mut ambiguous = false;
+                let mut context_pos = pos;
 
-            let start_pos = context_pos.ok_or_else(|| {
-                Error::Apply(format!("Could not find context: {:?}", hunk.context_before))
-            })?;
-
-            // Verify deletions match if any exist
-            let deletion_start = start_pos + hunk.context_before.len();
-            if !hunk.deletions.is_empty() {
-                if deletion_start + hunk.deletions.len() > lines.len() {
-                    return Err(Error::Apply(
-                        "Deletion extends past end of file".to_string(),
-                    ));
+                while context_pos + hunk.context_before.len() <= lines.len() {
+                    let mut matches = true;
+                    for (j, context_line) in hunk.context_before.iter().enumerate() {
+                        if lines[context_pos + j] != context_line {
+                            matches = false;
+                            break;
+                        }
+                    }
+                    if matches {
+                        if found {
+                            // Found another match - ambiguous
+                            ambiguous = true;
+                            break;
+                        }
+                        found = true;
+                        pos = context_pos;
+                    }
+                    context_pos += 1;
                 }
-                for (i, deletion) in hunk.deletions.iter().enumerate() {
-                    if lines[deletion_start + i] != deletion {
-                        return Err(Error::Apply(format!(
-                            "Deletion mismatch - expected '{}', found '{}'",
-                            deletion,
-                            lines[deletion_start + i]
-                        )));
+
+                if !found {
+                    return Err(Error::Apply(format!(
+                        "Could not find context: {:?}",
+                        hunk.context_before
+                    )));
+                }
+                if ambiguous {
+                    return Err(Error::AmbiguousMatch(format!(
+                        "Multiple matches for context: {:?}",
+                        hunk.context_before
+                    )));
+                }
+
+                // Verify deletions
+                let deletion_start = pos + hunk.context_before.len();
+                if !hunk.deletions.is_empty() {
+                    if deletion_start + hunk.deletions.len() > lines.len() {
+                        return Err(Error::Apply(
+                            "Deletion extends past end of file".to_string(),
+                        ));
+                    }
+                    for (i, deletion) in hunk.deletions.iter().enumerate() {
+                        if lines[deletion_start + i] != deletion {
+                            return Err(Error::Apply(format!(
+                                "Deletion mismatch at line {} - expected '{}', found '{}'",
+                                deletion_start + i + 1,
+                                deletion,
+                                lines[deletion_start + i]
+                            )));
+                        }
                     }
                 }
             }
 
-            // Copy everything up to this point
-            result.extend(lines[pos..start_pos].iter().map(|s| s.to_string()));
+            // Copy lines between previous hunk and this one
+            if result.is_empty() {
+                result.extend(lines[..pos].iter().map(|s| s.to_string()));
+            }
 
             // Add context before
             result.extend(hunk.context_before.iter().cloned());
@@ -85,8 +140,8 @@ impl FuDiff {
             // Add context after
             result.extend(hunk.context_after.iter().cloned());
 
-            // Update position
-            pos = deletion_start + hunk.deletions.len() + hunk.context_after.len();
+            // Update position past deletions and context
+            pos = pos + hunk.context_before.len() + hunk.deletions.len() + hunk.context_after.len();
         }
 
         // Copy remaining lines
@@ -497,31 +552,83 @@ mod tests {
     #[test]
     fn test_patch() {
         let test_cases = vec![
+            // Basic cases
             (
                 "fn main() {\n    println!(\"Hello\");\n}",
                 "@@ @@\n fn main() {\n-    println!(\"Hello\");\n+    println!(\"Goodbye\");\n }\n",
-                "fn main() {\n    println!(\"Goodbye\");\n}",
+                Ok("fn main() {\n    println!(\"Goodbye\");\n}"),
             ),
             (
                 "a\nb\nc\nd\ne",
                 "@@ @@\n a\n-b\n+x\n c\n@@ @@\n d\n-e\n+y\n",
-                "a\nx\nc\nd\ny",
+                Ok("a\nx\nc\nd\ny"),
             ),
-            ("start\nmiddle\nend", "", "start\nmiddle\nend"),
+            // Empty cases
+            ("", "", Ok("")),
+            ("start\nmiddle\nend", "", Ok("start\nmiddle\nend")),
+            // Error cases
+            (
+                "",
+                "@@ @@\n-line\n+newline\n",
+                Err("Cannot apply patch to empty input"),
+            ),
+            (
+                "wrong",
+                "@@ @@\n context\n-old\n+new\n",
+                Err("Could not find context"),
+            ),
+            ("a\nx\n", "@@ @@\n a\n-b\n+c\n", Err("Deletion mismatch")),
+            // Ambiguous context
+            (
+                "test\ntest\nend",
+                "@@ @@\n test\n-end\n+new\n",
+                Err("Multiple matches for context"),
+            ),
+            // Empty context cases
+            ("delete\nkeep", "@@ @@\n-delete\n+add\n", Ok("add\nkeep")),
+            // Context with special characters
+            (
+                "line 1\n  indented\nline 3",
+                "@@ @@\n line 1\n-  indented\n+\tnew\n",
+                Ok("line 1\n\tnew\nline 3"),
+            ),
+            // Multiple hunks with overlapping context
+            (
+                "a\nb\nc\nd\ne",
+                "@@ @@\n a\n b\n-c\n+x\n@@ @@\n d\n-e\n+y\n",
+                Ok("a\nb\nx\nd\ny"),
+            ),
+            // Deletion at end of file
+            ("start\nend\n", "@@ @@\n start\n-end\n", Ok("start")),
         ];
 
         for (input, diff_str, expected) in test_cases {
             let diff = FuDiff::parse(diff_str).unwrap();
-            let result = diff.patch(input).unwrap();
-            assert_eq!(result, expected);
+            match (diff.patch(input), expected) {
+                (Ok(result), Ok(expected)) => {
+                    assert_eq!(result, expected);
+                }
+                (Err(Error::Apply(msg)), Err(expected_msg)) => {
+                    assert!(
+                        msg.contains(expected_msg),
+                        "Expected error containing '{}', got '{}'",
+                        expected_msg,
+                        msg
+                    );
+                }
+                (Err(Error::AmbiguousMatch(msg)), Err(expected_msg)) => {
+                    assert!(
+                        msg.contains(expected_msg),
+                        "Expected error containing '{}', got '{}'",
+                        expected_msg,
+                        msg
+                    );
+                }
+                (result, expected) => {
+                    panic!("Unexpected result: {:?}, expected: {:?}", result, expected);
+                }
+            }
         }
-
-        // Error cases
-        let diff = FuDiff::parse("@@ @@\n context\n-old\n+new\n").unwrap();
-        assert!(diff.patch("wrong context").is_err());
-
-        let diff = FuDiff::parse("@@ @@\n a\n-b\n+c\n").unwrap();
-        assert!(diff.patch("a\nx\n").is_err());
     }
 
     #[test]
