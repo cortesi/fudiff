@@ -9,6 +9,7 @@ A Rust library implementing a robust fuzzy unified diff format designed for AI-d
 - Clean, minimalist diff format optimized for AI interactions 
 - Reversible patches - can apply and revert changes
 - Extensive tests
+- Optional serde support for serialization/deserialization (enable with *serde* feature)
 
 ## Usage
 

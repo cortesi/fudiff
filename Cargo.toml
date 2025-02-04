@@ -2,6 +2,12 @@
 name = "fudiff"
 version = "0.1.0"
 edition = "2021"
+authors = ["Aldo Cortesi <aldo@corte.si>"]
+description = "Fuzzy Unified Diff"
+keywords = ["ai", "diff", "udiff"]
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/cortesi/fudiff"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"], optional = true }
