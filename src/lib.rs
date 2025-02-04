@@ -600,6 +600,41 @@ mod tests {
     }
 
     #[test]
+    fn test_revert_round_trip() {
+        let test_cases = vec![
+            ("Empty input", "", ""),
+            ("Single line", "hello world", "new line"),
+            ("Multiple lines", "first\nsecond\nthird", "one\ntwo\nthree"),
+            (
+                "With context",
+                "before\nchange\nafter",
+                "before\ndifferent\nafter",
+            ),
+            ("Multiple hunks", "a\nx\nc\ny\ne", "a\nb\nc\nd\ne"),
+            ("Empty lines", "\n\n\n", "1\n2\n3\n"),
+            ("Special chars", "fn(x) { y }", "fn(x) { z }"),
+            ("Indentation", "  a\n    b\n  c", "  x\n    y\n  z"),
+        ];
+
+        for (name, original, modified) in test_cases {
+            // Create a diff from original to modified
+            let diff = FuDiff::diff(original, modified);
+
+            // Apply the diff
+            let patched = diff.patch(original).unwrap();
+            assert_eq!(patched, modified, "{}: patch failed", name);
+
+            // Revert the changes
+            let reverted = diff.revert(&patched).unwrap();
+            assert_eq!(reverted, original, "{}: revert failed", name);
+
+            // Apply again to get back to modified
+            let repatched = diff.patch(&reverted).unwrap();
+            assert_eq!(repatched, modified, "{}: re-patch failed", name);
+        }
+    }
+
+    #[test]
     fn test_patch_edge_cases() {
         let test_cases = vec![
             // Empty input, empty diff
