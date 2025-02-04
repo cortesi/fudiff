@@ -21,6 +21,41 @@ pub struct FuDiff {
 }
 
 impl FuDiff {
+    /// Renders the diff back to the unified diff format.
+    pub fn render(&self) -> String {
+        let mut output = String::new();
+
+        for hunk in &self.hunks {
+            output.push_str("@@ @@\n");
+
+            for line in &hunk.context_before {
+                output.push_str(" ");
+                output.push_str(line);
+                output.push('\n');
+            }
+
+            for line in &hunk.deletions {
+                output.push_str("-");
+                output.push_str(line);
+                output.push('\n');
+            }
+
+            for line in &hunk.additions {
+                output.push_str("+");
+                output.push_str(line);
+                output.push('\n');
+            }
+
+            for line in &hunk.context_after {
+                output.push_str(" ");
+                output.push_str(line);
+                output.push('\n');
+            }
+        }
+
+        output
+    }
+
     /// Parse a fuzzy diff from a string.
     pub fn parse(input: &str) -> Result<Self> {
         let mut hunks = Vec::new();
@@ -133,6 +168,56 @@ mod tests {
         input: &'static str,
         want_hunks: Option<Vec<Hunk>>,
         want_err: Option<&'static str>,
+    }
+
+    #[test]
+    fn test_render() {
+        let diff = FuDiff {
+            hunks: vec![Hunk {
+                context_before: vec!["fn main() {".to_string()],
+                deletions: vec!["    println!(\"Hello\");".to_string()],
+                additions: vec!["    println!(\"Goodbye\");".to_string()],
+                context_after: vec!["}".to_string()],
+            }],
+        };
+
+        let expected = "\
+@@ @@
+ fn main() {
+-    println!(\"Hello\");
++    println!(\"Goodbye\");
+ }
+";
+
+        assert_eq!(diff.render(), expected);
+    }
+
+    #[test]
+    fn test_round_trip() {
+        let test_cases = vec![
+            // Basic round trip
+            "@@ @@\n fn main() {\n-    old\n+    new\n }\n",
+            // Multiple hunks
+            "@@ @@\n a\n-b\n+c\n d\n@@ @@\n x\n-y\n+z\n w\n",
+            // Empty context sections
+            "@@ @@\n-deleted\n+added\n",
+            // Just context
+            "@@ @@\n context1\n context2\n",
+            // Multiple deletions and additions
+            "@@ @@\n before\n-del1\n-del2\n+add1\n+add2\n after\n",
+        ];
+
+        for input in test_cases {
+            let parsed = FuDiff::parse(input).unwrap();
+            let rendered = parsed.render();
+            let reparsed = FuDiff::parse(&rendered).unwrap();
+
+            assert_eq!(
+                parsed.hunks, reparsed.hunks,
+                "Round trip failed.\nInput:\n{}\nRe-rendered:\n{}",
+                input, rendered
+            );
+        }
     }
 
     #[test]
