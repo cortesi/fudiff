@@ -146,7 +146,7 @@ impl FuDiff {
     pub fn render(&self) -> String {
         let mut output = String::new();
 
-        for hunk in &self.hunks {
+        for (i, hunk) in self.hunks.iter().enumerate() {
             output.push_str("@@ @@\n");
 
             for line in &hunk.context_before {
@@ -167,10 +167,12 @@ impl FuDiff {
                 output.push('\n');
             }
 
-            for line in &hunk.context_after {
+            for (j, line) in hunk.context_after.iter().enumerate() {
                 output.push(' ');
                 output.push_str(line);
-                output.push('\n');
+                if i < self.hunks.len() - 1 || j < hunk.context_after.len() - 1 {
+                    output.push('\n');
+                }
             }
         }
 
@@ -364,8 +366,18 @@ mod tests {
             return String::new();
         }
 
-        // Find the minimum indentation level
-        let min_indent = lines
+        // Find non-empty line indices
+        let first_non_empty = lines.iter().position(|line| !line.trim().is_empty());
+        let last_non_empty = lines.iter().rposition(|line| !line.trim().is_empty());
+
+        if first_non_empty.is_none() {
+            return String::new();
+        }
+
+        let (start, end) = (first_non_empty.unwrap(), last_non_empty.unwrap());
+
+        // Find the minimum indentation level among non-empty lines
+        let min_indent = lines[start..=end]
             .iter()
             .filter(|line| !line.trim().is_empty())
             .map(|line| line.len() - line.trim_start().len())
@@ -373,7 +385,7 @@ mod tests {
             .unwrap_or(0);
 
         // Strip exactly that much whitespace from each line
-        lines
+        lines[start..=end]
             .iter()
             .map(|line| {
                 if line.len() <= min_indent {
@@ -404,15 +416,15 @@ mod tests {
             }],
         };
 
-        let expected = "\
-@@ @@
- fn main() {
--    println!(\"Hello\");
-+    println!(\"Goodbye\");
- }
-";
+        let expected = "
+            @@ @@
+             fn main() {
+            -    println!(\"Hello\");
+            +    println!(\"Goodbye\");
+             }
+        ";
 
-        assert_eq!(diff.render(), expected);
+        assert_eq!(diff.render(), strip_leading_whitespace(expected));
     }
 
     #[test]
