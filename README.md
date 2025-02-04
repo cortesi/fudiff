@@ -1,3 +1,7 @@
+[![Crates.io](https://img.shields.io/crates/v/fudiff.svg)](https://crates.io/crates/fudiff)
+[![Docs](https://img.shields.io/docsrs/fudiff)](https://docs.rs/fudiff)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 # FuDiff
 
 A Rust library implementing a robust fuzzy unified diff format designed for AI-driven patching tools.
