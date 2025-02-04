@@ -27,6 +27,24 @@ impl std::fmt::Display for FuDiff {
 }
 
 impl FuDiff {
+    /// Reverts this diff from a string where it was previously applied.
+    pub fn revert(&self, input: &str) -> Result<String> {
+        // Create a new diff with swapped additions/deletions
+        let reverted = FuDiff {
+            hunks: self
+                .hunks
+                .iter()
+                .map(|h| Hunk {
+                    context_before: h.context_before.clone(),
+                    deletions: h.additions.clone(),
+                    additions: h.deletions.clone(),
+                    context_after: h.context_after.clone(),
+                })
+                .collect(),
+        };
+
+        reverted.patch(input)
+    }
     /// Applies this diff to the given input text, producing the patched result.
     /// Returns an error if the patch cannot be applied cleanly.
     pub fn patch(&self, input: &str) -> Result<String> {
@@ -542,6 +560,43 @@ mod tests {
         ";
 
         assert_eq!(diff.render(), strip_leading_whitespace(expected));
+    }
+
+    #[test]
+    fn test_revert() {
+        let test_cases = vec![
+            // Basic revert
+            (
+                "fn main() {\n    println!(\"Goodbye\");\n}",
+                "@@ @@\n fn main() {\n-    println!(\"Hello\");\n+    println!(\"Goodbye\");\n }\n",
+                Ok("fn main() {\n    println!(\"Hello\");\n}"),
+            ),
+            // Multiple hunks
+            (
+                "a\nx\nc\ny\ne",
+                "@@ @@\n a\n-b\n+x\n c\n@@ @@\n c\n-d\n+y\n e\n",
+                Ok("a\nb\nc\nd\ne"),
+            ),
+            // Error case - content doesn't match
+            (
+                "wrong content",
+                "@@ @@\n a\n-b\n+x\n",
+                Err("Could not find context"),
+            ),
+        ];
+
+        for (input, diff_str, expected) in test_cases {
+            let diff = FuDiff::parse(diff_str).unwrap();
+            match (diff.revert(input), expected) {
+                (Ok(result), Ok(expected)) => assert_eq!(result, expected),
+                (Err(Error::Apply(msg)), Err(expected_msg)) => {
+                    assert!(msg.contains(expected_msg));
+                }
+                (result, expected) => {
+                    panic!("Unexpected result: {:?}, expected: {:?}", result, expected);
+                }
+            }
+        }
     }
 
     #[test]
