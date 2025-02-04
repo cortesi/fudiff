@@ -23,7 +23,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub fn diff(old: &str, new: &str) -> FuDiff {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
-
     let mut hunks = Vec::new();
     let mut current_hunk = Hunk {
         context_before: Vec::new(),
@@ -31,34 +30,27 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
         additions: Vec::new(),
         context_after: Vec::new(),
     };
-
     let mut i = 0;
     let mut j = 0;
-
+    // Collect initial matching lines.
     while i < old_lines.len() && j < new_lines.len() && old_lines[i] == new_lines[j] {
         current_hunk.context_before.push(old_lines[i].to_string());
         i += 1;
         j += 1;
     }
-
+    let lookahead = 3;
     while i < old_lines.len() || j < new_lines.len() {
-        let lookahead = 3;
         let mut next_match = None;
-
-        // Look for nearest matching lines within the lookahead window.
-        for offset in 0..=lookahead {
-            for di in 0..=offset {
-                for dj in 0..=offset {
-                    if i + di < old_lines.len()
-                        && j + dj < new_lines.len()
-                        && (di > 0 || dj > 0)
-                        && old_lines[i + di] == new_lines[j + dj]
-                    {
-                        next_match = Some((di, dj));
-                        break;
-                    }
+        for di in 0..=lookahead {
+            for dj in 0..=lookahead {
+                if di == 0 && dj == 0 {
+                    continue;
                 }
-                if next_match.is_some() {
+                if i + di < old_lines.len()
+                    && j + dj < new_lines.len()
+                    && old_lines[i + di] == new_lines[j + dj]
+                {
+                    next_match = Some((di, dj));
                     break;
                 }
             }
@@ -66,68 +58,51 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
                 break;
             }
         }
-
-        match next_match {
-            Some((di, dj)) => {
-                // Accumulate differing lines.
+        if let Some((di, dj)) = next_match {
+            current_hunk
+                .deletions
+                .extend(old_lines[i..i + di].iter().map(|s| s.to_string()));
+            current_hunk
+                .additions
+                .extend(new_lines[j..j + dj].iter().map(|s| s.to_string()));
+            i += di;
+            j += dj;
+            let mut matching = 0;
+            while i + matching < old_lines.len()
+                && j + matching < new_lines.len()
+                && old_lines[i + matching] == new_lines[j + matching]
+                && matching < lookahead
+            {
                 current_hunk
-                    .deletions
-                    .extend(old_lines[i..i + di].iter().map(|s| s.to_string()));
-                current_hunk
-                    .additions
-                    .extend(new_lines[j..j + dj].iter().map(|s| s.to_string()));
-                i += di;
-                j += dj;
-
-                // Collect matching context lines after the change.
-                let mut matches = 0;
-                while i + matches < old_lines.len()
-                    && j + matches < new_lines.len()
-                    && old_lines[i + matches] == new_lines[j + matches]
-                    && matches < lookahead
-                {
-                    current_hunk
-                        .context_after
-                        .push(old_lines[i + matches].to_string());
-                    matches += 1;
-                }
-                i += matches;
-                j += matches;
-
-                // Finalize the current hunk if it contains changes.
-                if !current_hunk.deletions.is_empty() || !current_hunk.additions.is_empty() {
-                    let mut new_hunk = Hunk {
-                        context_before: Vec::new(),
-                        deletions: Vec::new(),
-                        additions: Vec::new(),
-                        context_after: Vec::new(),
-                    };
-                    std::mem::swap(
-                        &mut new_hunk.context_before,
-                        &mut current_hunk.context_after,
-                    );
-                    hunks.push(current_hunk);
-                    current_hunk = new_hunk;
-                }
+                    .context_after
+                    .push(old_lines[i + matching].to_string());
+                matching += 1;
             }
-            None => {
-                // No further match found: add all remaining lines.
-                current_hunk
-                    .deletions
-                    .extend(old_lines[i..].iter().map(|s| s.to_string()));
-                current_hunk
-                    .additions
-                    .extend(new_lines[j..].iter().map(|s| s.to_string()));
-                break;
+            i += matching;
+            j += matching;
+            if !current_hunk.deletions.is_empty() || !current_hunk.additions.is_empty() {
+                let new_context = std::mem::take(&mut current_hunk.context_after);
+                hunks.push(current_hunk);
+                current_hunk = Hunk {
+                    context_before: new_context,
+                    deletions: Vec::new(),
+                    additions: Vec::new(),
+                    context_after: Vec::new(),
+                };
             }
+        } else {
+            current_hunk
+                .deletions
+                .extend(old_lines[i..].iter().map(|s| s.to_string()));
+            current_hunk
+                .additions
+                .extend(new_lines[j..].iter().map(|s| s.to_string()));
+            break;
         }
     }
-
-    // Add the final hunk if any changes exist.
     if !current_hunk.deletions.is_empty() || !current_hunk.additions.is_empty() {
         hunks.push(current_hunk);
     }
-
     FuDiff { hunks }
 }
 
@@ -228,8 +203,6 @@ impl FuDiff {
         reverted.patch(input)
     }
 
-    /// Applies this diff to the provided input text, returning the patched result.
-    /// Returns an error if the patch cannot be applied cleanly.
     /// Applies this diff to the provided input text, returning the patched result.
     /// Returns an error if the patch cannot be applied cleanly.
     pub fn patch(&self, input: &str) -> Result<String> {
