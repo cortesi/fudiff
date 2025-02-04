@@ -430,6 +430,8 @@ mod tests {
     #[test]
     fn test_round_trip() {
         let test_cases = vec![
+            // Empty diff
+            "",
             // Basic round trip
             "@@ @@\n fn main() {\n-    old\n+    new\n }\n",
             // Multiple hunks
