@@ -137,13 +137,6 @@ fn strip_leading_whitespace(text: &str) -> String {
         .join("\n")
 }
 
-struct TestCase {
-    name: &'static str,
-    input: &'static str,
-    want_hunks: Option<Vec<Hunk>>,
-    want_err: Option<&'static str>,
-}
-
 #[test]
 fn test_render() {
     let diff = FuDiff {
@@ -449,8 +442,6 @@ fn test_unicode_diff() {
 #[test]
 fn test_windows_line_endings() {
     // Convert windows line endings to unix for .lines() based processing.
-    let old_windows = "line1\r\nline2\r\n";
-    let new_windows = "line1\r\nline changed\r\nline2\r\n";
     let old_unix = "line1\nline2\n";
     let new_unix = "line1\nline changed\nline2\n";
     let diff = crate::diff(old_unix, new_unix);
