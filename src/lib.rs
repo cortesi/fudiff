@@ -20,6 +20,12 @@ pub struct FuDiff {
     pub hunks: Vec<Hunk>,
 }
 
+impl std::fmt::Display for FuDiff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.render())
+    }
+}
+
 impl FuDiff {
     /// Renders the diff back to the unified diff format.
     pub fn render(&self) -> String {
