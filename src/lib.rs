@@ -8,11 +8,22 @@ mod tests;
 #[derive(Debug)]
 pub enum Error {
     /// Failed to parse the diff format.
-    Parse(String),
+    Parse { user: String, details: String },
     /// Failed to apply the patch.
-    Apply(String),
+    Apply { user: String, details: String },
     /// Multiple possible matches found for context.
-    AmbiguousMatch(String),
+    AmbiguousMatch { user: String, details: String },
+}
+
+impl Error {
+    /// Retrieves the detailed error message.
+    pub fn details(&self) -> &str {
+        match self {
+            Error::Parse { details, .. } => details,
+            Error::Apply { details, .. } => details,
+            Error::AmbiguousMatch { details, .. } => details,
+        }
+    }
 }
 
 /// A type alias for diff operation results.
@@ -29,7 +40,7 @@ pub struct Hunk {
 }
 
 /// Represents a complete fuzzy diff consisting of multiple hunks.
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FuDiff {
     pub hunks: Vec<Hunk>,
@@ -70,9 +81,10 @@ impl FuDiff {
 
         let lines: Vec<&str> = input.lines().collect();
         if lines.is_empty() && self.hunks.iter().any(|h| !h.deletions.is_empty()) {
-            return Err(Error::Apply(
-                "Cannot apply patch to empty input".to_string(),
-            ));
+            return Err(Error::Apply {
+                user: "Failed to apply patch".to_string(),
+                details: "Cannot apply patch to empty input".to_string(),
+            });
         }
 
         let mut result = Vec::new();
@@ -91,34 +103,42 @@ impl FuDiff {
                         .all(|(j, ctx)| lines[i + j] == ctx)
                     {
                         if candidate.is_some() {
-                            return Err(Error::AmbiguousMatch(format!(
-                                "Multiple matches for context: {:?}",
-                                hunk.context_before
-                            )));
+                            return Err(Error::AmbiguousMatch {
+                                user: "Multiple matching contexts found".to_string(),
+                                details: format!(
+                                    "Multiple matches for context: {:?}",
+                                    hunk.context_before
+                                ),
+                            });
                         }
                         candidate = Some(i);
                     }
                 }
-                candidate.ok_or_else(|| {
-                    Error::Apply(format!("Could not find context: {:?}", hunk.context_before))
+                candidate.ok_or_else(|| Error::Apply {
+                    user: "Failed to apply patch".to_string(),
+                    details: format!("Could not find context: {:?}", hunk.context_before),
                 })?
             };
 
             let deletion_start = hunk_pos + hunk.context_before.len();
             if !hunk.deletions.is_empty() {
                 if deletion_start + hunk.deletions.len() > lines.len() {
-                    return Err(Error::Apply(
-                        "Deletion extends past end of file".to_string(),
-                    ));
+                    return Err(Error::Apply {
+                        user: "Failed to apply patch".to_string(),
+                        details: "Deletion extends past end of file".to_string(),
+                    });
                 }
                 for (i, deletion) in hunk.deletions.iter().enumerate() {
                     if lines[deletion_start + i] != deletion {
-                        return Err(Error::Apply(format!(
-                            "Deletion mismatch at line {} - expected '{}', found '{}'",
-                            deletion_start + i + 1,
-                            deletion,
-                            lines[deletion_start + i]
-                        )));
+                        return Err(Error::Apply {
+                            user: "Failed to apply patch".to_string(),
+                            details: format!(
+                                "Deletion mismatch at line {} - expected '{}', found '{}'",
+                                deletion_start + i + 1,
+                                deletion,
+                                lines[deletion_start + i]
+                            ),
+                        });
                     }
                 }
             }
@@ -248,30 +268,53 @@ pub fn diff(old: &str, new: &str) -> FuDiff {
                 && old_lines[i + matching] == new_lines[j + matching]
                 && matching < lookahead
             {
-                current_hunk
-                    .context_after
-                    .push(old_lines[i + matching].to_string());
                 matching += 1;
             }
+            let matched: Vec<String> = old_lines[i..i + matching]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             i += matching;
             j += matching;
             if !current_hunk.deletions.is_empty() || !current_hunk.additions.is_empty() {
-                let new_context = std::mem::take(&mut current_hunk.context_after);
+                if !current_hunk.deletions.is_empty() && !current_hunk.additions.is_empty() {
+                    current_hunk.context_after = Vec::new();
+                } else {
+                    current_hunk.context_after = matched.clone();
+                }
                 hunks.push(current_hunk);
                 current_hunk = Hunk {
-                    context_before: new_context,
+                    context_before: matched,
                     deletions: Vec::new(),
                     additions: Vec::new(),
                     context_after: Vec::new(),
                 };
+            } else {
+                current_hunk.context_before.extend(matched);
             }
         } else {
-            current_hunk
-                .deletions
-                .extend(old_lines[i..].iter().map(|s| s.to_string()));
-            current_hunk
-                .additions
-                .extend(new_lines[j..].iter().map(|s| s.to_string()));
+            // Handle remaining deletions and additions
+            current_hunk.deletions.extend(
+                old_lines[i..i + (old_lines.len() - i)]
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
+            current_hunk.additions.extend(
+                new_lines[j..j + (new_lines.len() - j)]
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
+
+            // Add trailing context if both sides have matching content
+            let remaining_old = old_lines.len() - (i + current_hunk.deletions.len());
+            let remaining_new = new_lines.len() - (j + current_hunk.additions.len());
+            let context_size = std::cmp::min(remaining_old, remaining_new);
+            if context_size > 0 {
+                current_hunk.context_after = old_lines[old_lines.len() - context_size..]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+            }
             break;
         }
     }
@@ -294,11 +337,14 @@ pub fn parse(input: &str) -> Result<FuDiff> {
 
     // Non-empty input must contain hunk markers.
     if !input.contains("@@") {
-        return Err(Error::Parse("No hunks found in diff".to_string()));
+        return Err(Error::Parse {
+            user: "Failed to parse diff".to_string(),
+            details: "No hunks found in diff".to_string(),
+        });
     }
 
     for line in input.lines() {
-        if line.starts_with("@@") && line[2..].contains("@@") {
+        if line.starts_with("@@") {
             // Finalize the previous hunk and start a new one.
             if let Some(hunk) = current_hunk.take() {
                 hunks.push(hunk);
@@ -312,15 +358,20 @@ pub fn parse(input: &str) -> Result<FuDiff> {
             continue;
         }
 
-        // Skip headers and irrelevant lines.
-        if line.is_empty() || line.starts_with("---") || line.starts_with("+++") {
+        // Skip headers
+        if line.starts_with("---") || line.starts_with("+++") {
             continue;
         }
 
         // Ensure the line is within a hunk.
-        let hunk = current_hunk
-            .as_mut()
-            .ok_or_else(|| Error::Parse("Line found outside of hunk".to_string()))?;
+        let hunk = current_hunk.as_mut().ok_or_else(|| Error::Parse {
+            user: "Failed to parse diff".to_string(),
+            details: "Line found outside of hunk".to_string(),
+        })?;
+
+        if line.is_empty() {
+            continue;
+        }
 
         let (marker, content) = line.split_at(1);
         match marker {
@@ -333,7 +384,14 @@ pub fn parse(input: &str) -> Result<FuDiff> {
             }
             "-" => hunk.deletions.push(content.to_string()),
             "+" => hunk.additions.push(content.to_string()),
-            _ => return Err(Error::Parse(format!("Invalid line prefix: {}", marker))),
+            _ => {
+                // Lines that don't start with a diff marker are treated as context
+                if hunk.deletions.is_empty() && hunk.additions.is_empty() {
+                    hunk.context_before.push(line.to_string());
+                } else {
+                    hunk.context_after.push(line.to_string());
+                }
+            }
         }
     }
 

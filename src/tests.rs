@@ -183,8 +183,8 @@ fn test_revert() {
         let diff = crate::parse(diff_str).unwrap();
         match (diff.revert(input), expected) {
             (Ok(result), Ok(expected)) => assert_eq!(result, expected),
-            (Err(Error::Apply(msg)), Err(expected_msg))
-            | (Err(Error::AmbiguousMatch(msg)), Err(expected_msg)) => {
+            (Err(Error::Apply { details: msg, .. }), Err(expected_msg))
+            | (Err(Error::AmbiguousMatch { details: msg, .. }), Err(expected_msg)) => {
                 assert!(msg.contains(expected_msg));
             }
             (result, expected) => {
@@ -260,8 +260,8 @@ fn test_patch_edge_cases() {
         let diff = crate::parse(diff_str).unwrap();
         match (diff.patch(input), expected) {
             (Ok(result), Ok(expected)) => assert_eq!(result, expected),
-            (Err(Error::Apply(msg)), Err(expected_msg))
-            | (Err(Error::AmbiguousMatch(msg)), Err(expected_msg)) => {
+            (Err(Error::Apply { details: msg, .. }), Err(expected_msg))
+            | (Err(Error::AmbiguousMatch { details: msg, .. }), Err(expected_msg)) => {
                 assert!(msg.contains(expected_msg));
             }
             (result, expected) => {
@@ -340,8 +340,8 @@ fn test_patch() {
             (Ok(result), Ok(expected)) => {
                 assert_eq!(result, expected);
             }
-            (Err(Error::Apply(msg)), Err(expected_msg))
-            | (Err(Error::AmbiguousMatch(msg)), Err(expected_msg)) => {
+            (Err(Error::Apply { details: msg, .. }), Err(expected_msg))
+            | (Err(Error::AmbiguousMatch { details: msg, .. }), Err(expected_msg)) => {
                 assert!(msg.contains(expected_msg));
             }
             (result, expected) => {
@@ -360,6 +360,15 @@ fn test_parse_render_round_trip() {
         "@@ @@\n-deleted\n+added\n",
         "@@ @@\n context1\n context2\n",
         "@@ @@\n before\n-del1\n-del2\n+add1\n+add2\n after\n",
+        "@@ @@\n}\n",
+        // Additions only
+        "@@ @@\n context\n+new line\n more context\n",
+        "@@ @@\n+only additions\n+multiple lines\n",
+        // Deletions only
+        "@@ @@\n context\n-removed line\n more context\n",
+        "@@ @@\n-only deletions\n-multiple lines\n",
+        // Empty hunk with only context
+        "@@ @@\n just\n some\n context\n",
     ];
 
     for input in test_cases {
@@ -479,4 +488,92 @@ fn test_no_change() {
     assert!(diff_instance.hunks.is_empty());
     let patched = diff_instance.patch(text).unwrap();
     assert_eq!(patched, text);
+}
+
+#[test]
+fn test_additions_only() {
+    let test_cases = vec![
+        (
+            "start\nend",
+            "start\nnew\nend",
+            vec![Hunk {
+                context_before: vec!["start".to_string()],
+                deletions: vec![],
+                additions: vec!["new".to_string()],
+                context_after: vec!["end".to_string()],
+            }],
+        ),
+        (
+            "",
+            "new line",
+            vec![Hunk {
+                context_before: vec![],
+                deletions: vec![],
+                additions: vec!["new line".to_string()],
+                context_after: vec![],
+            }],
+        ),
+        (
+            "context",
+            "context\nadded1\nadded2",
+            vec![Hunk {
+                context_before: vec!["context".to_string()],
+                deletions: vec![],
+                additions: vec!["added1".to_string(), "added2".to_string()],
+                context_after: vec![],
+            }],
+        ),
+    ];
+
+    for (original, modified, expected_hunks) in test_cases {
+        let diff = crate::diff(original, modified);
+        assert_eq!(diff.hunks, expected_hunks);
+        let patched = diff.patch(original).unwrap();
+        assert_eq!(patched, modified);
+    }
+}
+
+#[test]
+fn test_deletions_only() {
+    let test_cases = vec![
+        (
+            "start\nremove\nend",
+            "start\nend",
+            vec![Hunk {
+                context_before: vec!["start".to_string()],
+                deletions: vec!["remove".to_string()],
+                additions: vec![],
+                context_after: vec!["end".to_string()],
+            }],
+        ),
+        (
+            "to delete",
+            "",
+            vec![Hunk {
+                context_before: vec![],
+                deletions: vec!["to delete".to_string()],
+                additions: vec![],
+                context_after: vec![],
+            }],
+        ),
+        (
+            "context\ndelete1\ndelete2\nmore",
+            "context\nmore",
+            vec![Hunk {
+                context_before: vec!["context".to_string()],
+                deletions: vec!["delete1".to_string(), "delete2".to_string()],
+                additions: vec![],
+                context_after: vec!["more".to_string()],
+            }],
+        ),
+    ];
+
+    for (original, modified, expected_hunks) in test_cases {
+        let diff = crate::diff(original, modified);
+        assert_eq!(diff.hunks, expected_hunks);
+        let patched = diff.patch(original).unwrap();
+        assert_eq!(patched, modified);
+        let reverted = diff.revert(&patched).unwrap();
+        assert_eq!(reverted, original);
+    }
 }
