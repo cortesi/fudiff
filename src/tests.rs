@@ -423,7 +423,6 @@ fn test_diff_patch_round_trip() {
     }
 }
 
-// New test to verify preservation of multiple trailing newlines.
 #[test]
 fn test_newline_preservation() {
     let original = "line1\nline2\n";
@@ -432,4 +431,61 @@ fn test_newline_preservation() {
     let patched = diff.patch(original).unwrap();
     // Ensure trailing newline is preserved if originally present.
     assert_eq!(patched, modified);
+}
+
+// Additional tests for edge cases.
+
+#[test]
+fn test_unicode_diff() {
+    let old = "こんにちは\n世界";
+    let new = "こんにちは\nRust";
+    let diff = crate::diff(old, new);
+    let patched = diff.patch(old).unwrap();
+    assert_eq!(patched, new);
+    let reverted = diff.revert(&patched).unwrap();
+    assert_eq!(reverted, old);
+}
+
+#[test]
+fn test_windows_line_endings() {
+    // Convert windows line endings to unix for .lines() based processing.
+    let old_windows = "line1\r\nline2\r\n";
+    let new_windows = "line1\r\nline changed\r\nline2\r\n";
+    let old_unix = "line1\nline2\n";
+    let new_unix = "line1\nline changed\nline2\n";
+    let diff = crate::diff(old_unix, new_unix);
+    let patched = diff.patch(old_unix).unwrap();
+    assert_eq!(patched, new_unix);
+}
+
+#[test]
+fn test_all_lines_changed() {
+    let old = "a\nb\nc";
+    let new = "x\ny\nz";
+    let diff = crate::diff(old, new);
+    // Expect a single hunk with no surrounding context.
+    assert_eq!(diff.hunks.len(), 1);
+    let hunk = &diff.hunks[0];
+    assert!(hunk.context_before.is_empty());
+    assert!(hunk.context_after.is_empty());
+    assert_eq!(
+        hunk.deletions,
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+    assert_eq!(
+        hunk.additions,
+        vec!["x".to_string(), "y".to_string(), "z".to_string()]
+    );
+    let patched = diff.patch(old).unwrap();
+    assert_eq!(patched, new);
+}
+
+#[test]
+fn test_no_change() {
+    let text = "unchanged\nline";
+    let diff_instance = crate::diff(text, text);
+    // No hunks should be produced.
+    assert!(diff_instance.hunks.is_empty());
+    let patched = diff_instance.patch(text).unwrap();
+    assert_eq!(patched, text);
 }
