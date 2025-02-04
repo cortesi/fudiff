@@ -27,6 +27,73 @@ impl std::fmt::Display for FuDiff {
 }
 
 impl FuDiff {
+    /// Applies this diff to the given input text, producing the patched result.
+    /// Returns an error if the patch cannot be applied cleanly.
+    pub fn patch(&self, input: &str) -> Result<String> {
+        let lines: Vec<&str> = input.lines().collect();
+        let mut result = Vec::new();
+        let mut pos = 0;
+
+        for hunk in &self.hunks {
+            // Find position of context before
+            let mut context_pos = None;
+            'outer: for i in pos..=lines.len() {
+                if i + hunk.context_before.len() > lines.len() {
+                    continue;
+                }
+                for (j, context_line) in hunk.context_before.iter().enumerate() {
+                    if lines[i + j] != context_line {
+                        continue 'outer;
+                    }
+                }
+                context_pos = Some(i);
+                break;
+            }
+
+            let start_pos = context_pos.ok_or_else(|| {
+                Error::Apply(format!("Could not find context: {:?}", hunk.context_before))
+            })?;
+
+            // Verify deletions match if any exist
+            let deletion_start = start_pos + hunk.context_before.len();
+            if !hunk.deletions.is_empty() {
+                if deletion_start + hunk.deletions.len() > lines.len() {
+                    return Err(Error::Apply(
+                        "Deletion extends past end of file".to_string(),
+                    ));
+                }
+                for (i, deletion) in hunk.deletions.iter().enumerate() {
+                    if lines[deletion_start + i] != deletion {
+                        return Err(Error::Apply(format!(
+                            "Deletion mismatch - expected '{}', found '{}'",
+                            deletion,
+                            lines[deletion_start + i]
+                        )));
+                    }
+                }
+            }
+
+            // Copy everything up to this point
+            result.extend(lines[pos..start_pos].iter().map(|s| s.to_string()));
+
+            // Add context before
+            result.extend(hunk.context_before.iter().cloned());
+
+            // Add additions
+            result.extend(hunk.additions.iter().cloned());
+
+            // Add context after
+            result.extend(hunk.context_after.iter().cloned());
+
+            // Update position
+            pos = deletion_start + hunk.deletions.len() + hunk.context_after.len();
+        }
+
+        // Copy remaining lines
+        result.extend(lines[pos..].iter().map(|s| s.to_string()));
+
+        Ok(result.join("\n"))
+    }
     /// Creates a diff between two strings.
     pub fn diff(old: &str, new: &str) -> Self {
         let old_lines: Vec<&str> = old.lines().collect();
@@ -425,6 +492,36 @@ mod tests {
         ";
 
         assert_eq!(diff.render(), strip_leading_whitespace(expected));
+    }
+
+    #[test]
+    fn test_patch() {
+        let test_cases = vec![
+            (
+                "fn main() {\n    println!(\"Hello\");\n}",
+                "@@ @@\n fn main() {\n-    println!(\"Hello\");\n+    println!(\"Goodbye\");\n }\n",
+                "fn main() {\n    println!(\"Goodbye\");\n}",
+            ),
+            (
+                "a\nb\nc\nd\ne",
+                "@@ @@\n a\n-b\n+x\n c\n@@ @@\n d\n-e\n+y\n",
+                "a\nx\nc\nd\ny",
+            ),
+            ("start\nmiddle\nend", "", "start\nmiddle\nend"),
+        ];
+
+        for (input, diff_str, expected) in test_cases {
+            let diff = FuDiff::parse(diff_str).unwrap();
+            let result = diff.patch(input).unwrap();
+            assert_eq!(result, expected);
+        }
+
+        // Error cases
+        let diff = FuDiff::parse("@@ @@\n context\n-old\n+new\n").unwrap();
+        assert!(diff.patch("wrong context").is_err());
+
+        let diff = FuDiff::parse("@@ @@\n a\n-b\n+c\n").unwrap();
+        assert!(diff.patch("a\nx\n").is_err());
     }
 
     #[test]
